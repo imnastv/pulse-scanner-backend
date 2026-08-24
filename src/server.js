@@ -1,0 +1,55 @@
+import http from 'node:http';
+import { URL } from 'node:url';
+import { SolanaScanner } from './scanner.js';
+
+const config = {
+  port: Number(process.env.PORT || 10000),
+  rpcUrl: process.env.SOLANA_RPC_URL || 'https://rpc.solanatracker.io/public',
+  wsUrl: process.env.SOLANA_WS_URL || 'wss://rpc.solanatracker.io/public',
+  programId: process.env.PUMP_PROGRAM_ID || '',
+  allowedOrigin: process.env.ALLOWED_ORIGIN || 'https://pulse-pumpfun-scanner.contactnxstv.chatgpt.site',
+  botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  chatId: process.env.TELEGRAM_CHAT_ID || ''
+};
+
+const scanner = new SolanaScanner(config).start();
+const clients = new Set();
+
+scanner.on('signal', (signal) => {
+  for (const client of clients) client.write(`event: signal\ndata: ${JSON.stringify(signal)}\n\n`);
+});
+
+function sendJson(res, status, value) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': config.allowedOrigin, vary: 'Origin' });
+  res.end(JSON.stringify(value));
+}
+
+async function telegramTest() {
+  if (!config.botToken || !config.chatId) throw new Error('Telegram secrets are not configured');
+  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: config.chatId, text: '✅ PULSE backend is connected. Live scanner alerts are ready.' })
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.description || 'Telegram request failed');
+  return { ok: true };
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': config.allowedOrigin, 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': 'content-type' }); return res.end(); }
+  if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, scanner: scanner.metrics.status, telegramConfigured: Boolean(config.botToken && config.chatId), programConfigured: Boolean(config.programId) });
+  if (req.method === 'GET' && url.pathname === '/api/signals') return sendJson(res, 200, scanner.snapshot());
+  if (req.method === 'GET' && url.pathname === '/api/stream') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'access-control-allow-origin': config.allowedOrigin });
+    res.write(`event: snapshot\ndata: ${JSON.stringify(scanner.snapshot())}\n\n`);
+    clients.add(res); req.on('close', () => clients.delete(res)); return;
+  }
+  if (req.method === 'POST' && url.pathname === '/api/telegram/test') {
+    try { return sendJson(res, 200, await telegramTest()); } catch (error) { return sendJson(res, 503, { ok: false, error: error.message }); }
+  }
+  return sendJson(res, 404, { error: 'Not found' });
+});
+
+server.listen(config.port, '0.0.0.0', () => console.log(`PULSE backend listening on ${config.port}`));
+
