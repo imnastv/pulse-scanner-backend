@@ -10,13 +10,29 @@ const config = {
   allowedOrigin: process.env.ALLOWED_ORIGIN || 'https://pulse-pumpfun-scanner.contactnxstv.chatgpt.site',
   botToken: process.env.TELEGRAM_BOT_TOKEN || '',
   chatId: process.env.TELEGRAM_CHAT_ID || ''
+  ,apiKey: process.env.API_ACCESS_KEY || '',
+  alertThreshold: Number(process.env.ALERT_SCORE_THRESHOLD || 85)
 };
 
 const scanner = new SolanaScanner(config).start();
 const clients = new Set();
 
-scanner.on('signal', (signal) => {
+const alerted = new Map();
+async function sendTelegram(text) {
+  if (!config.botToken || !config.chatId) throw new Error('Telegram secrets are not configured');
+  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: config.chatId, text, disable_web_page_preview: true }) });
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.description || 'Telegram request failed');
+  return { ok: true };
+}
+
+scanner.on('signal', async (signal) => {
   for (const client of clients) client.write(`event: signal\ndata: ${JSON.stringify(signal)}\n\n`);
+  if (signal.score >= config.alertThreshold && signal.mint && !alerted.has(signal.mint)) {
+    alerted.set(signal.mint, Date.now());
+    try { await sendTelegram(`🚨 PULSE SIGNAL ${signal.score}/100\n\nMint: ${signal.mint}\nRisk: ${signal.risk}\nTop 5 concentration: ${signal.top5Concentration}%\n\nhttps://pump.fun/coin/${signal.mint}`); }
+    catch (error) { console.error('Telegram alert failed:', error.message); }
+  }
 });
 
 function sendJson(res, status, value) {
@@ -25,14 +41,7 @@ function sendJson(res, status, value) {
 }
 
 async function telegramTest() {
-  if (!config.botToken || !config.chatId) throw new Error('Telegram secrets are not configured');
-  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: config.chatId, text: '✅ PULSE backend is connected. Live scanner alerts are ready.' })
-  });
-  const result = await response.json();
-  if (!response.ok || !result.ok) throw new Error(result.description || 'Telegram request failed');
-  return { ok: true };
+  return sendTelegram('✅ PULSE backend is connected. Live scanner alerts are ready.');
 }
 
 const server = http.createServer(async (req, res) => {
@@ -46,6 +55,7 @@ const server = http.createServer(async (req, res) => {
     clients.add(res); req.on('close', () => clients.delete(res)); return;
   }
   if (req.method === 'POST' && url.pathname === '/api/telegram/test') {
+    if (!config.apiKey || req.headers.authorization !== `Bearer ${config.apiKey}`) return sendJson(res, 401, { ok: false, error: 'Unauthorized' });
     try { return sendJson(res, 200, await telegramTest()); } catch (error) { return sendJson(res, 503, { ok: false, error: error.message }); }
   }
   return sendJson(res, 404, { error: 'Not found' });
