@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 const MAX_SIGNALS = 250;
 
 export class SolanaScanner extends EventEmitter {
-  constructor({ wsUrl, rpcUrl, programId, minMarketCap = 5000 }) {
+  constructor({ wsUrl, rpcUrl, programId, minMarketCap = 4000 }) {
     super();
     this.wsUrl = wsUrl;
     this.rpcUrl = rpcUrl;
