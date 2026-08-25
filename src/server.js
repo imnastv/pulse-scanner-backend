@@ -11,8 +11,8 @@ const config = {
   botToken: process.env.TELEGRAM_BOT_TOKEN || '',
   chatId: process.env.TELEGRAM_CHAT_ID || ''
   ,apiKey: process.env.API_ACCESS_KEY || '',
-  alertThreshold: Number(process.env.ALERT_SCORE_THRESHOLD || 85)
-  ,minMarketCap: Number(process.env.MIN_MARKET_CAP_USD || 5000)
+  alertThreshold: Number(process.env.ALERT_SCORE_THRESHOLD || 75)
+  ,minMarketCap: Number(process.env.MIN_MARKET_CAP_USD || 4000)
 };
 
 const scanner = new SolanaScanner(config).start();
