@@ -2,7 +2,7 @@ services:
   - type: web
     name: pulse-scanner-backend
     runtime: node
-    plan: starter
+    plan: free
     region: ohio
     buildCommand: npm run check
     startCommand: npm start
