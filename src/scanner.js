@@ -102,14 +102,15 @@ export class SolanaScanner extends EventEmitter {
   }
 
   queueCandidate(base, enrichment) {
-    if (!enrichment.mint || this.pending.has(enrichment.mint) || this.signals.some((signal) => signal.mint === enrichment.mint)) return;
+    const key = enrichment.mint || base.signature;
+    if (!key || this.pending.has(key) || (enrichment.mint && this.signals.some((signal) => signal.mint === enrichment.mint))) return;
     if (this.pending.size >= MAX_PENDING) {
       const oldest = this.pending.keys().next().value;
       if (oldest) this.pending.delete(oldest);
       this.metrics.queueExpired += 1;
     }
     const now = Date.now();
-    this.pending.set(enrichment.mint, { base, enrichment, createdAt: now, expiresAt: now + RETRY_WINDOW_MS, nextCheckAt: now + RETRY_INTERVAL_MS, retryCount: 0 });
+    this.pending.set(key, { base, enrichment, createdAt: now, expiresAt: now + RETRY_WINDOW_MS, nextCheckAt: now + 1500, retryCount: 0 });
     this.metrics.queued = this.pending.size;
   }
 
@@ -118,18 +119,34 @@ export class SolanaScanner extends EventEmitter {
     this.processingQueue = true;
     try {
       const now = Date.now();
-      for (const [mint, item] of [...this.pending].filter(([, value]) => value.nextCheckAt <= now).slice(0, RETRY_BATCH_SIZE)) {
+      for (const [key, item] of [...this.pending].filter(([, value]) => value.nextCheckAt <= now).slice(0, RETRY_BATCH_SIZE)) {
         if (now >= item.expiresAt) {
-          this.pending.delete(mint);
+          this.pending.delete(key);
           this.metrics.queueExpired += 1;
           this.metrics.marketCapFiltered += 1;
           continue;
         }
-        const market = await this.marketData(mint);
         item.retryCount += 1;
+        this.metrics.queueRechecks += 1;
+        if (!item.enrichment.mint) {
+          try {
+            const enrichment = await this.enrich(item.base.signature);
+            this.pending.delete(key);
+            if (this.pending.has(enrichment.mint) || this.signals.some((signal) => signal.mint === enrichment.mint)) continue;
+            item.enrichment = { ...enrichment, retryCount: item.retryCount };
+            if (Number.isFinite(enrichment.marketCap) && enrichment.marketCap >= this.minMarketCap) this.publish(item.base, item.enrichment);
+            else {
+              item.nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
+              this.pending.set(enrichment.mint, item);
+            }
+          } catch {
+            item.nextCheckAt = Date.now() + 5000;
+          }
+          continue;
+        }
+        const market = await this.marketData(item.enrichment.mint);
         item.nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
         item.enrichment = { ...item.enrichment, ...market, retryCount: item.retryCount };
-        this.metrics.queueRechecks += 1;
         if (Number.isFinite(market.marketCap) && market.marketCap >= this.minMarketCap) this.publish(item.base, item.enrichment);
       }
     } finally {
@@ -158,14 +175,7 @@ export class SolanaScanner extends EventEmitter {
       detectedAt: new Date().toISOString(),
       status: 'enriched'
     };
-    let enrichment;
-    try { enrichment = await this.enrich(result.signature); }
-    catch (error) { enrichment = { score: 45, risk: 'High', reason: `Enrichment pending: ${error.message}` }; }
-    if (!Number.isFinite(enrichment.marketCap) || enrichment.marketCap < this.minMarketCap) {
-      this.queueCandidate(base, enrichment);
-      return;
-    }
-    this.publish(base, enrichment);
+    this.queueCandidate(base, {});
   }
 
   reconnect() {
