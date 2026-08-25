@@ -12,6 +12,7 @@ const config = {
   chatId: process.env.TELEGRAM_CHAT_ID || ''
   ,apiKey: process.env.API_ACCESS_KEY || '',
   alertThreshold: Number(process.env.ALERT_SCORE_THRESHOLD || 85)
+  ,minMarketCap: Number(process.env.MIN_MARKET_CAP_USD || 5000)
 };
 
 const scanner = new SolanaScanner(config).start();
@@ -30,7 +31,7 @@ scanner.on('signal', async (signal) => {
   for (const client of clients) client.write(`event: signal\ndata: ${JSON.stringify(signal)}\n\n`);
   if (signal.score >= config.alertThreshold && signal.mint && !alerted.has(signal.mint)) {
     alerted.set(signal.mint, Date.now());
-    try { await sendTelegram(`🚨 PULSE SIGNAL ${signal.score}/100\n\nMint: ${signal.mint}\nRisk: ${signal.risk}\nTop 5 concentration: ${signal.top5Concentration}%\n\nhttps://pump.fun/coin/${signal.mint}`); }
+    try { await sendTelegram(`🚨 PULSE SIGNAL ${signal.score}/100\n\nMint: ${signal.mint}\nMarket cap: $${Math.round(signal.marketCap).toLocaleString('en-US')}\nRisk: ${signal.risk}\nTop 5 concentration: ${signal.top5Concentration}%\n\nhttps://pump.fun/coin/${signal.mint}`); }
     catch (error) { console.error('Telegram alert failed:', error.message); }
   }
 });
@@ -47,7 +48,7 @@ async function telegramTest() {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': config.allowedOrigin, 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': 'content-type' }); return res.end(); }
-  if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, scanner: scanner.metrics.status, telegramConfigured: Boolean(config.botToken && config.chatId), programConfigured: Boolean(config.programId) });
+  if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, scanner: scanner.metrics.status, telegramConfigured: Boolean(config.botToken && config.chatId), programConfigured: Boolean(config.programId), minMarketCap: config.minMarketCap });
   if (req.method === 'GET' && url.pathname === '/api/signals') return sendJson(res, 200, scanner.snapshot());
   if (req.method === 'GET' && url.pathname === '/api/stream') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'access-control-allow-origin': config.allowedOrigin });
