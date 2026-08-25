@@ -17,6 +17,8 @@ services:
         value: wss://rpc.solanatracker.io/public
       - key: ALERT_SCORE_THRESHOLD
         value: "85"
+      - key: MIN_MARKET_CAP_USD
+        value: "5000"
       - key: ALLOWED_ORIGIN
         value: https://pulse-pumpfun-scanner.contactnxstv.chatgpt.site
       - key: PUMP_PROGRAM_ID
