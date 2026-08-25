@@ -11,7 +11,7 @@ const config = {
   botToken: process.env.TELEGRAM_BOT_TOKEN || '',
   chatId: process.env.TELEGRAM_CHAT_ID || ''
   ,apiKey: process.env.API_ACCESS_KEY || '',
-  alertThreshold: Number(process.env.ALERT_SCORE_THRESHOLD || 70)
+  alertThreshold: Number(process.env.ALERT_SCORE_THRESHOLD || 60)
   ,minMarketCap: Number(process.env.MIN_MARKET_CAP_USD || 2500)
 };
 
