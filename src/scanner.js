@@ -37,7 +37,31 @@ export class SolanaScanner extends EventEmitter {
     ws.addEventListener('error', () => ws.close());
   }
 
-  onMessage(raw) {
+  async rpc(method, params) {
+    const response = await fetch(this.rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }) });
+    const body = await response.json();
+    if (!response.ok || body.error) throw new Error(body.error?.message || `RPC ${response.status}`);
+    return body.result;
+  }
+
+  async enrich(signature) {
+    const transaction = await this.rpc('getTransaction', [signature, { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 }]);
+    const balances = transaction?.meta?.postTokenBalances ?? [];
+    const mint = balances.find((x) => x?.mint)?.mint;
+    if (!mint) throw new Error('Mint unavailable');
+    const [supply, largest] = await Promise.all([
+      this.rpc('getTokenSupply', [mint, { commitment: 'confirmed' }]),
+      this.rpc('getTokenLargestAccounts', [mint, { commitment: 'confirmed' }])
+    ]);
+    const total = Number(supply?.value?.uiAmountString || 0);
+    const accounts = largest?.value ?? [];
+    const top = accounts.slice(0, 5).reduce((sum, x) => sum + Number(x.uiAmountString || 0), 0);
+    const concentration = total > 0 ? Math.min(100, top / total * 100) : 100;
+    const score = Math.max(20, Math.min(95, Math.round(92 - concentration * .65 + Math.min(10, accounts.length / 2))));
+    return { mint, score, risk: concentration < 25 ? 'Low' : concentration < 50 ? 'Medium' : 'High', top5Concentration: Number(concentration.toFixed(1)), supply: supply?.value?.uiAmountString ?? '0', holderAccountsSampled: accounts.length };
+  }
+
+  async onMessage(raw) {
     let message;
     try { message = JSON.parse(raw); } catch { return; }
     if (message.method === 'slotNotification') {
@@ -52,13 +76,15 @@ export class SolanaScanner extends EventEmitter {
     const logs = result?.logs ?? [];
     const launchLike = logs.some((line) => /initialize|create|mint/i.test(line));
     if (!launchLike || result?.err) return;
-    const signal = {
+    const base = {
       signature: result.signature,
       detectedAt: new Date().toISOString(),
-      score: 50,
-      status: 'candidate',
-      reason: 'Pump.fun program creation activity detected; enrichment pending'
+      status: 'enriched'
     };
+    let enrichment;
+    try { enrichment = await this.enrich(result.signature); }
+    catch (error) { enrichment = { score: 45, risk: 'High', reason: `Enrichment pending: ${error.message}` }; }
+    const signal = { ...base, ...enrichment, reason: enrichment.reason || `New Pump.fun mint detected; top-5 concentration ${enrichment.top5Concentration}%` };
     this.signals.unshift(signal);
     this.signals.length = Math.min(this.signals.length, MAX_SIGNALS);
     this.metrics.candidates += 1;
