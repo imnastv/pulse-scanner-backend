@@ -19,7 +19,7 @@ export class SolanaScanner extends EventEmitter {
     this.signals = [];
     this.pending = new Map();
     this.processingQueue = false;
-    this.metrics = { status: 'starting', slots: 0, logs: 0, candidates: 0, queued: 0, queueRechecks: 0, queueExpired: 0, marketCapFiltered: 0, minMarketCap, startedAt: new Date().toISOString(), lastEventAt: null };
+    this.metrics = { status: 'starting', slots: 0, logs: 0, exactCreates: 0, candidates: 0, queued: 0, queueRechecks: 0, queueExpired: 0, marketCapFiltered: 0, minMarketCap, startedAt: new Date().toISOString(), lastEventAt: null };
   }
 
   start() {
@@ -110,7 +110,7 @@ export class SolanaScanner extends EventEmitter {
       this.metrics.queueExpired += 1;
     }
     const now = Date.now();
-    this.pending.set(key, { base, enrichment, createdAt: now, expiresAt: now + RETRY_WINDOW_MS, nextCheckAt: now + 1500, retryCount: 0 });
+    this.pending.set(key, { base, enrichment, priority: enrichment.mint ? 110 : 100, createdAt: now, expiresAt: now + RETRY_WINDOW_MS, nextCheckAt: now + 1500, retryCount: 0 });
     this.metrics.queued = this.pending.size;
   }
 
@@ -119,7 +119,11 @@ export class SolanaScanner extends EventEmitter {
     this.processingQueue = true;
     try {
       const now = Date.now();
-      for (const [key, item] of [...this.pending].filter(([, value]) => value.nextCheckAt <= now).slice(0, RETRY_BATCH_SIZE)) {
+      const due = [...this.pending]
+        .filter(([, value]) => value.nextCheckAt <= now)
+        .sort((a, b) => b[1].priority - a[1].priority || a[1].createdAt - b[1].createdAt)
+        .slice(0, RETRY_BATCH_SIZE);
+      for (const [key, item] of due) {
         if (now >= item.expiresAt) {
           this.pending.delete(key);
           this.metrics.queueExpired += 1;
@@ -134,6 +138,7 @@ export class SolanaScanner extends EventEmitter {
             this.pending.delete(key);
             if (this.pending.has(enrichment.mint) || this.signals.some((signal) => signal.mint === enrichment.mint)) continue;
             item.enrichment = { ...enrichment, retryCount: item.retryCount };
+            item.priority = 110;
             if (Number.isFinite(enrichment.marketCap) && enrichment.marketCap >= this.minMarketCap) this.publish(item.base, item.enrichment);
             else {
               item.nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
@@ -168,8 +173,9 @@ export class SolanaScanner extends EventEmitter {
     this.metrics.lastEventAt = new Date().toISOString();
     const result = message.params?.result?.value;
     const logs = result?.logs ?? [];
-    const launchLike = logs.some((line) => /initialize|create|mint/i.test(line));
-    if (!launchLike || result?.err) return;
+    const exactCreate = logs.some((line) => /^Program log: Instruction: (Create|CreateV2)$/.test(line));
+    if (!exactCreate || result?.err) return;
+    this.metrics.exactCreates += 1;
     const base = {
       signature: result.signature,
       detectedAt: new Date().toISOString(),
