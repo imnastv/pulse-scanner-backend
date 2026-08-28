@@ -31,7 +31,8 @@ scanner.on('signal', async (signal) => {
   for (const client of clients) client.write(`event: signal\ndata: ${JSON.stringify(signal)}\n\n`);
   if (signal.score >= config.alertThreshold && signal.mint && !alerted.has(signal.mint)) {
     alerted.set(signal.mint, Date.now());
-    try { await sendTelegram(`🚨 PULSE SIGNAL ${signal.score}/100\n\nMint: ${signal.mint}\nMarket cap: $${Math.round(signal.marketCap).toLocaleString('en-US')}\nRisk: ${signal.risk}\nTop 5 concentration: ${signal.top5Concentration}%\n\nhttps://pump.fun/coin/${signal.mint}`); }
+    const concentration = signal.holderDataAvailable ? `${signal.top5Concentration}%` : 'Unavailable (fallback score)';
+    try { await sendTelegram(`🚨 PULSE SIGNAL ${signal.score}/100\n\nMint: ${signal.mint}\nMarket cap: $${Math.round(signal.marketCap).toLocaleString('en-US')}\nRisk: ${signal.risk}\nTop 5 concentration: ${concentration}\n\nhttps://pump.fun/coin/${signal.mint}`); }
     catch (error) { console.error('Telegram alert failed:', error.message); }
   }
 });
