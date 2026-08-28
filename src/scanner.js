@@ -78,23 +78,28 @@ export class SolanaScanner extends EventEmitter {
     const balances = transaction?.meta?.postTokenBalances ?? [];
     const mint = balances.find((x) => x?.mint?.endsWith('pump'))?.mint ?? balances.find((x) => x?.mint)?.mint;
     if (!mint) throw new Error('Mint unavailable');
-    const [supply, largest, market] = await Promise.all([
+    const [supplyResult, largestResult, marketResult] = await Promise.allSettled([
       this.rpc('getTokenSupply', [mint, { commitment: 'confirmed' }]),
       this.rpc('getTokenLargestAccounts', [mint, { commitment: 'confirmed' }]),
       this.marketData(mint)
     ]);
+    const supply = supplyResult.status === 'fulfilled' ? supplyResult.value : null;
+    const largest = largestResult.status === 'fulfilled' ? largestResult.value : null;
+    const market = marketResult.status === 'fulfilled' ? marketResult.value : { marketCap: null, priceUsd: null, marketSource: null };
     const total = Number(supply?.value?.uiAmountString || 0);
     const accounts = largest?.value ?? [];
     const top = accounts.slice(0, 5).reduce((sum, x) => sum + Number(x.uiAmountString || 0), 0);
     const concentration = total > 0 ? Math.min(100, top / total * 100) : 100;
-    const score = Math.max(20, Math.min(95, Math.round(92 - concentration * .65 + Math.min(10, accounts.length / 2))));
-    return { mint, score, risk: concentration < 25 ? 'Low' : concentration < 50 ? 'Medium' : 'High', top5Concentration: Number(concentration.toFixed(1)), supply: supply?.value?.uiAmountString ?? '0', holderAccountsSampled: accounts.length, ...market };
+    const holderDataAvailable = largestResult.status === 'fulfilled' && total > 0 && accounts.length > 0;
+    const score = holderDataAvailable ? Math.max(20, Math.min(95, Math.round(92 - concentration * .65 + Math.min(10, accounts.length / 2)))) : 45;
+    return { mint, score, risk: holderDataAvailable ? (concentration < 25 ? 'Low' : concentration < 50 ? 'Medium' : 'High') : 'High', top5Concentration: holderDataAvailable ? Number(concentration.toFixed(1)) : null, holderDataAvailable, supply: supply?.value?.uiAmountString ?? '0', holderAccountsSampled: accounts.length, ...market };
   }
 
   publish(base, enrichment) {
     this.pending.delete(enrichment.mint);
     this.metrics.queued = this.pending.size;
-    const signal = { ...base, ...enrichment, status: 'qualified', reason: `Pump.fun mint qualified after ${enrichment.retryCount || 0} rechecks; $${Math.round(enrichment.marketCap).toLocaleString('en-US')} market cap; top-5 concentration ${enrichment.top5Concentration}%` };
+    const concentration = enrichment.holderDataAvailable ? `${enrichment.top5Concentration}%` : 'unavailable (fallback score 45)';
+    const signal = { ...base, ...enrichment, status: 'qualified', reason: `Pump.fun mint qualified after ${enrichment.retryCount || 0} rechecks; $${Math.round(enrichment.marketCap).toLocaleString('en-US')} market cap; top-5 concentration ${concentration}` };
     this.signals.unshift(signal);
     this.signals.length = Math.min(this.signals.length, MAX_SIGNALS);
     this.metrics.candidates += 1;
