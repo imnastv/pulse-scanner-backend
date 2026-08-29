@@ -16,7 +16,7 @@ services:
       - key: SOLANA_WS_URL
         value: wss://rpc.solanatracker.io/public
       - key: ALERT_SCORE_THRESHOLD
-        value: "45"
+        value: "60"
       - key: MIN_MARKET_CAP_USD
         value: "2500"
       - key: ALLOWED_ORIGIN
