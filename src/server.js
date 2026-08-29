@@ -31,18 +31,11 @@ scanner.on('signal', async (signal) => {
   for (const client of clients) client.write(`event: signal\ndata: ${JSON.stringify(signal)}\n\n`);
 
   const verified = signal.holderDataAvailable && signal.score >= config.alertThreshold;
-  const fallback = !signal.holderDataAvailable && signal.score === 45;
-  if (!signal.mint || alerted.has(signal.mint) || (!verified && !fallback)) return;
+  if (!verified || !signal.mint || alerted.has(signal.mint)) return;
 
   alerted.set(signal.mint, Date.now());
-  const title = verified
-    ? `✅ VERIFIED HIGH-POTENTIAL — PULSE ${signal.score}/100`
-    : '⚠️ UNVERIFIED CANDIDATE — FALLBACK 45/100';
-  const concentration = verified ? `${signal.top5Concentration}%` : 'Unavailable — holder RPC temporarily failed';
-  const verification = verified ? 'Holder data verified' : 'Unverified fallback — use extra caution';
-
   try {
-    await sendTelegram(`${title}\n\nMint: ${signal.mint}\nMarket cap: ${Math.round(signal.marketCap).toLocaleString('en-US')}\nStatus: ${verification}\nRisk: ${signal.risk}\nTop 5 concentration: ${concentration}\n\nhttps://pump.fun/coin/${signal.mint}`);
+    await sendTelegram(`✅ VERIFIED HIGH-POTENTIAL — PULSE ${signal.score}/100\n\nMint: ${signal.mint}\nMarket cap: $${Math.round(signal.marketCap).toLocaleString('en-US')}\nStatus: Holder data verified\nRisk: ${signal.risk}\nTop 5 concentration: ${signal.top5Concentration}%\n\nhttps://pump.fun/coin/${signal.mint}`);
   } catch (error) {
     console.error('Telegram alert failed:', error.message);
   }
